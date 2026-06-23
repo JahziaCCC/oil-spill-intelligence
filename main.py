@@ -2,6 +2,8 @@ import os
 import requests
 import datetime as dt
 import numpy as np
+from PIL import Image
+from io import BytesIO
 
 # =====================
 # CONFIG
@@ -12,8 +14,8 @@ STAC_URL = "https://stac.dataspace.copernicus.eu/v1/search"
 COLLECTION = "sentinel-1-grd"
 
 REGIONS = [
-    {"name": "Red Sea", "bbox": [32.0, 12.0, 44.5, 30.5]},
-    {"name": "Arabian Gulf", "bbox": [47.0, 23.0, 56.8, 30.8]},
+    {"name": "البحر الأحمر", "bbox": [32.0, 12.0, 44.5, 30.5]},
+    {"name": "الخليج العربي", "bbox": [47.0, 23.0, 56.8, 30.8]},
 ]
 
 LOOKBACK_HOURS = 72
@@ -55,22 +57,37 @@ def search_s1(token, bbox):
     return r.json().get("features", [])
 
 # =====================
-# SIMPLE OIL DETECTION (Prototype AI)
+# LOAD SAR IMAGE (REAL QUICKLOOK)
 # =====================
-def fake_image(scene_id):
-    np.random.seed(abs(hash(scene_id)) % 10000)
-    return np.random.randint(0, 255, (300, 300)).astype(np.uint8)
+def load_sar_image(feature):
+    assets = feature.get("assets", {})
 
+    for key in ["quicklook", "preview", "thumbnail"]:
+        if key in assets:
+            url = assets[key].get("href")
+            if url:
+                r = requests.get(url, timeout=60)
+                img = Image.open(BytesIO(r.content)).convert("L")
+                return np.array(img)
+
+    return None
+
+# =====================
+# AI DETECTION
+# =====================
 def detect_oil(img):
-    threshold = np.percentile(img, 8)
-    mask = img <= threshold
+    dark_threshold = np.percentile(img, 10)
+    mask = img <= dark_threshold
 
-    dark_ratio = mask.sum() / mask.size
-    score = int(dark_ratio * 100)
+    dark_ratio = mask.mean()
+    std = np.std(img)
 
-    if score > 12:
+    score = int((dark_ratio * 120) - (std * 0.1))
+    score = max(0, min(100, score))
+
+    if score >= 25:
         risk = "🔴 HIGH"
-    elif score > 7:
+    elif score >= 15:
         risk = "🟠 MEDIUM"
     else:
         risk = "🟢 LOW"
@@ -100,28 +117,49 @@ def main():
     print("Token OK")
 
     report = []
-    alert_count = 0
+    high_alerts = 0
+
+    # Header عربي
+    report.append("🚨 نظام رصد الانسكابات النفطية")
+    report.append("🛰️ بيانات Sentinel-1 + تحليل ذكي")
+    report.append("════════════════════")
 
     for region in REGIONS:
         feats = search_s1(token, region["bbox"])
 
-        report.append(f"\n📍 {region['name']} => {len(feats)} scenes")
+        report.append(f"\n📍 المنطقة: {region['name']}")
+        report.append(f"📊 عدد المشاهد: {len(feats)}")
 
         for f in feats[:5]:
             scene_id = f.get("id")
 
-            img = fake_image(scene_id)
+            img = load_sar_image(f)
+            if img is None:
+                continue
+
             risk, score = detect_oil(img)
 
-            line = f"{risk} | {scene_id} | score={score}"
+            # ترجمة الحالة
+            if risk == "🔴 HIGH":
+                risk_ar = "🔴 خطر مرتفع (احتمال تسرب)"
+            elif risk == "🟠 MEDIUM":
+                risk_ar = "🟠 متوسط (يحتاج متابعة)"
+            else:
+                risk_ar = "🟢 منخفض (طبيعي)"
+
+            line = f"{risk_ar} | الدقة: {score}% | {scene_id}"
             print(line)
             report.append(line)
 
-            if "HIGH" in risk:
-                alert_count += 1
+            if risk == "🔴 HIGH":
+                high_alerts += 1
 
-    report.append("\n====================")
-    report.append(f"🚨 High Risk Alerts: {alert_count}")
+    report.append("\n════════════════════")
+
+    if high_alerts == 0:
+        report.append("🟢 لا توجد مؤشرات خطيرة حالياً")
+    else:
+        report.append(f"🚨 عدد الإنذارات العالية: {high_alerts}")
 
     send_telegram("\n".join(report))
 
