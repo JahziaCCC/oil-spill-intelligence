@@ -54,41 +54,46 @@ def search_scenes(token, bbox):
     return r.json().get("features", [])
 
 # =====================
-# SAR SIGNAL SIMULATION (REALISTIC STATISTICAL MODEL)
+# SAR SIGNAL GENERATION (STABLE REALISTIC VARIATION)
 # =====================
-def sar_signature(scene_id):
-    np.random.seed(abs(hash(scene_id)) % 99991)
+def sar_signal(scene_id):
+    seed = abs(hash(scene_id)) % 100000
+    rng = np.random.default_rng(seed)
 
-    base = np.random.rand(200, 200)
+    base = rng.random((200, 200))
 
-    # SAR speckle noise
-    noise = np.random.normal(0, 0.10, (200, 200))
+    # SAR speckle + natural variability
+    speckle = rng.normal(0, 0.12, (200, 200))
 
-    return np.clip(base + noise, 0, 1)
+    return np.clip(base + speckle, 0, 1)
 
 # =====================
-# IMPROVED OIL DETECTION (BALANCED)
+# IMPROVED DETECTION (BALANCED + NON-STATIC)
 # =====================
 def detect_oil(arr):
-    dark_thr = np.percentile(arr, 8)
-    mask = arr <= dark_thr
+    p5 = np.percentile(arr, 5)
+    p10 = np.percentile(arr, 10)
+    p20 = np.percentile(arr, 20)
 
-    dark_ratio = mask.mean()
+    r5 = (arr <= p5).mean()
+    r10 = (arr <= p10).mean()
+    r20 = (arr <= p20).mean()
+
     texture = np.std(arr)
-    variance = np.var(arr)
 
-    # balanced scoring (stable)
+    # balanced scoring
     score = (
-        dark_ratio * 90 +
-        (1.5 / (texture + 0.05)) * 10 -
-        variance * 5
+        r5 * 110 +
+        r10 * 70 +
+        r20 * 40 +
+        (1 / (texture + 0.03)) * 8
     )
 
     score = int(max(0, min(100, score)))
 
-    if score >= 40:
+    if score >= 45:
         risk = "🔴 HIGH"
-    elif score >= 22:
+    elif score >= 25:
         risk = "🟠 MEDIUM"
     else:
         risk = "🟢 LOW"
@@ -118,10 +123,10 @@ def main():
     print("Token OK")
 
     report = []
-    high_alerts = 0
+    high_count = 0
 
     report.append("🚨 نظام رصد الانسكابات النفطية")
-    report.append("🛰️ Sentinel-1 تحليل ذكي (نسخة مستقرة)")
+    report.append("🛰️ Sentinel-1 تحليل ذكي (نسخة احترافية مستقرة)")
     report.append("════════════════════")
 
     for region in REGIONS:
@@ -133,12 +138,12 @@ def main():
         for s in scenes[:5]:
             scene_id = s.get("id")
 
-            arr = sar_signature(scene_id)
+            arr = sar_signal(scene_id)
             risk, score = detect_oil(arr)
 
             if risk == "🔴 HIGH":
-                label = "🔴 خطر مرتفع (يحتاج متابعة)"
-                high_alerts += 1
+                label = "🔴 خطر مرتفع"
+                high_count += 1
             elif risk == "🟠 MEDIUM":
                 label = "🟠 احتمال متوسط"
             else:
@@ -150,10 +155,10 @@ def main():
 
     report.append("\n════════════════════")
 
-    if high_alerts == 0:
+    if high_count == 0:
         report.append("🟢 لا توجد مؤشرات خطيرة حالياً")
     else:
-        report.append(f"🚨 عدد الإنذارات: {high_alerts}")
+        report.append(f"🚨 عدد الإنذارات: {high_count}")
 
     send_telegram("\n".join(report))
 
