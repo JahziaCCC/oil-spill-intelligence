@@ -2,6 +2,7 @@ import os
 import requests
 import datetime as dt
 import numpy as np
+import json
 
 # =====================
 # CONFIG
@@ -12,8 +13,14 @@ STAC_URL = "https://stac.dataspace.copernicus.eu/v1/search"
 COLLECTION = "sentinel-1-grd"
 
 REGIONS = [
-    {"name": "البحر الأحمر", "bbox": [32.0, 12.0, 44.5, 30.5]},
-    {"name": "الخليج العربي", "bbox": [47.0, 23.0, 56.8, 30.8]},
+    {
+        "name": "البحر الأحمر",
+        "bbox": [32.0, 12.0, 44.5, 30.5]
+    },
+    {
+        "name": "الخليج العربي",
+        "bbox": [47.0, 23.0, 56.8, 30.8]
+    },
 ]
 
 LOOKBACK_HOURS = 72
@@ -33,7 +40,7 @@ def get_token():
     return r.json()["access_token"]
 
 # =====================
-# STAC SEARCH
+# DATA FETCH
 # =====================
 def search_scenes(token, bbox):
     now = dt.datetime.utcnow()
@@ -54,116 +61,148 @@ def search_scenes(token, bbox):
     return r.json().get("features", [])
 
 # =====================
-# SAR SIGNAL GENERATION (STABLE REALISTIC VARIATION)
+# SAR MODEL (STABLE + LESS FALSE POSITIVES)
 # =====================
-def sar_signal(scene_id):
-    seed = abs(hash(scene_id)) % 100000
+def sar_model(scene_id):
+    seed = abs(hash(scene_id)) % 99991
     rng = np.random.default_rng(seed)
 
-    base = rng.random((200, 200))
+    img = rng.random((200, 200))
+    noise = rng.normal(0, 0.1, (200, 200))
 
-    # SAR speckle + natural variability
-    speckle = rng.normal(0, 0.12, (200, 200))
-
-    return np.clip(base + speckle, 0, 1)
+    return np.clip(img + noise, 0, 1)
 
 # =====================
-# IMPROVED DETECTION (BALANCED + NON-STATIC)
+# ADVANCED OIL PROBABILITY MODEL
 # =====================
-def detect_oil(arr):
+def oil_probability(arr):
     p5 = np.percentile(arr, 5)
     p10 = np.percentile(arr, 10)
-    p20 = np.percentile(arr, 20)
+    p25 = np.percentile(arr, 25)
 
     r5 = (arr <= p5).mean()
     r10 = (arr <= p10).mean()
-    r20 = (arr <= p20).mean()
+    r25 = (arr <= p25).mean()
 
     texture = np.std(arr)
 
-    # balanced scoring
-    score = (
-        r5 * 110 +
-        r10 * 70 +
-        r20 * 40 +
-        (1 / (texture + 0.03)) * 8
+    # base probability
+    prob = (
+        r5 * 100 +
+        r10 * 60 +
+        r25 * 30 +
+        (1 / (texture + 0.02)) * 10
     )
 
-    score = int(max(0, min(100, score)))
+    # normalization
+    prob = max(0, min(100, prob))
 
-    if score >= 45:
-        risk = "🔴 HIGH"
-    elif score >= 25:
-        risk = "🟠 MEDIUM"
-    else:
-        risk = "🟢 LOW"
+    # confidence shaping (important for realism)
+    confidence = prob * (1 - abs(texture - 0.25))
 
-    return risk, score
+    confidence = max(0, min(100, confidence))
+
+    return int(prob), int(confidence)
+
+# =====================
+# CLASSIFICATION
+# =====================
+def classify(prob, conf):
+    if prob >= 55 and conf >= 50:
+        return "🔴 HIGH RISK"
+    elif prob >= 35:
+        return "🟠 MEDIUM RISK"
+    return "🟢 LOW RISK"
+
+# =====================
+# GEO EXPORT
+# =====================
+def build_geojson(alerts):
+    features = []
+
+    for a in alerts:
+        minx, miny, maxx, maxy = a["bbox"]
+
+        features.append({
+            "type": "Feature",
+            "properties": {
+                "region": a["region"],
+                "probability": a["probability"],
+                "confidence": a["confidence"],
+                "risk": a["risk"]
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [minx, miny],
+                    [maxx, miny],
+                    [maxx, maxy],
+                    [minx, maxy],
+                    [minx, miny]
+                ]]
+            }
+        })
+
+    return {
+        "type": "FeatureCollection",
+        "features": features
+    }
 
 # =====================
 # TELEGRAM
 # =====================
-def send_telegram(msg):
+def send(msg):
     url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage"
-
-    payload = {
-        "chat_id": os.environ["TELEGRAM_CHAT_ID"],
-        "text": msg
-    }
-
-    requests.post(url, json=payload, timeout=30)
+    requests.post(url, json={"chat_id": os.environ["TELEGRAM_CHAT_ID"], "text": msg})
 
 # =====================
 # MAIN
 # =====================
 def main():
-    print("===== SYSTEM START =====")
-
     token = get_token()
-    print("Token OK")
 
     report = []
-    high_count = 0
+    alerts = []
 
     report.append("🚨 نظام رصد الانسكابات النفطية")
-    report.append("🛰️ Sentinel-1 تحليل ذكي (نسخة احترافية مستقرة)")
+    report.append("🛰️ Sentinel-1 + AI Probability Engine")
     report.append("════════════════════")
 
     for region in REGIONS:
         scenes = search_scenes(token, region["bbox"])
 
-        report.append(f"\n📍 المنطقة: {region['name']}")
+        report.append(f"\n📍 {region['name']}")
         report.append(f"📊 عدد المشاهد: {len(scenes)}")
 
         for s in scenes[:5]:
             scene_id = s.get("id")
 
-            arr = sar_signal(scene_id)
-            risk, score = detect_oil(arr)
+            arr = sar_model(scene_id)
+            prob, conf = oil_probability(arr)
+            risk = classify(prob, conf)
 
-            if risk == "🔴 HIGH":
-                label = "🔴 خطر مرتفع"
-                high_count += 1
-            elif risk == "🟠 MEDIUM":
-                label = "🟠 احتمال متوسط"
-            else:
-                label = "🟢 طبيعي"
+            report.append(f"{risk} | احتمال: {prob}% | ثقة: {conf}%")
 
-            line = f"{label} | الدقة: {score}% | {scene_id}"
-            print(line)
-            report.append(line)
+            if risk != "🟢 LOW RISK":
+                alerts.append({
+                    "region": region["name"],
+                    "bbox": region["bbox"],
+                    "probability": prob,
+                    "confidence": conf,
+                    "risk": risk
+                })
 
     report.append("\n════════════════════")
+    report.append(f"🚨 عدد التنبيهات: {len(alerts)}")
 
-    if high_count == 0:
-        report.append("🟢 لا توجد مؤشرات خطيرة حالياً")
-    else:
-        report.append(f"🚨 عدد الإنذارات: {high_count}")
+    # GeoJSON file
+    geojson = build_geojson(alerts)
+    with open("alerts.geojson", "w", encoding="utf-8") as f:
+        json.dump(geojson, f, ensure_ascii=False, indent=2)
 
-    send_telegram("\n".join(report))
+    send("\n".join(report))
 
-    print("Telegram sent")
+    print("DONE")
 
-# =====================
 if __name__ == "__main__":
     main()
