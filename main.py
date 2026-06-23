@@ -1,27 +1,14 @@
 import os
 import requests
 import datetime as dt
-import numpy as np
-from collections import defaultdict
 
 # =====================
 # CONFIG
 # =====================
 TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
-STAC_SEARCH_URL = "https://stac.dataspace.copernicus.eu/v1/search"
-
-COLLECTION = "sentinel-1-grd"
-
-REGIONS = [
-    {"name_ar": "البحر الأحمر", "bbox": [32.0, 12.0, 44.5, 30.5]},
-    {"name_ar": "الخليج العربي", "bbox": [47.0, 23.0, 56.8, 30.8]},
-]
-
-LOOKBACK_HOURS = 72
-LIMIT_PER_REGION = 50
 
 # =====================
-# AUTH
+# AUTH (Copernicus)
 # =====================
 def get_access_token():
     payload = {
@@ -32,6 +19,8 @@ def get_access_token():
 
     r = requests.post(TOKEN_URL, data=payload, timeout=60)
 
+    print("TOKEN STATUS:", r.status_code)
+
     if r.status_code != 200:
         print(r.text)
         r.raise_for_status()
@@ -39,39 +28,39 @@ def get_access_token():
     return r.json()["access_token"]
 
 # =====================
-# STAC SEARCH
+# TELEGRAM TEST
 # =====================
-def stac_search(token, bbox, start_utc, end_utc):
-    headers = {"Authorization": f"Bearer {token}"}
+def send_telegram(message):
+    bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
+    chat_id = os.environ["TELEGRAM_CHAT_ID"]
 
-    body = {
-        "collections": [COLLECTION],
-        "bbox": bbox,
-        "datetime": f"{start_utc}/{end_utc}",
-        "limit": LIMIT_PER_REGION
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+
+    payload = {
+        "chat_id": chat_id,
+        "text": message
     }
 
-    r = requests.post(STAC_SEARCH_URL, headers=headers, json=body, timeout=120)
-    r.raise_for_status()
-    return r.json().get("features", [])
+    r = requests.post(url, json=payload, timeout=30)
+
+    print("Telegram status:", r.status_code)
+    print("Telegram response:", r.text)
 
 # =====================
 # MAIN
 # =====================
 def main():
-    now = dt.datetime.utcnow()
-    start = now - dt.timedelta(hours=LOOKBACK_HOURS)
+    print("===== START =====")
 
-    start_utc = start.strftime("%Y-%m-%dT%H:%M:%SZ")
-    end_utc = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-
+    # 1) Test Token
     token = get_access_token()
+    print("Token OK (length):", len(token))
 
-    print("Token OK")
+    # 2) Test Telegram
+    send_telegram("🟢 النظام شغال تمام - Copernicus + Telegram OK")
 
-    for region in REGIONS:
-        feats = stac_search(token, region["bbox"], start_utc, end_utc)
-        print(region["name_ar"], "=>", len(feats), "features")
+    print("===== DONE =====")
+
 
 if __name__ == "__main__":
     main()
