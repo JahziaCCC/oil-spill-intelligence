@@ -1,7 +1,9 @@
-name: Test System
+name: Oil Spill System
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 */6 * * *"
 
 jobs:
   run:
@@ -15,8 +17,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install
-        run: pip install requests
+      - name: Install dependencies
+        run: pip install requests numpy
 
       - name: Run
         env:
