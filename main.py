@@ -2,65 +2,49 @@ import os
 import requests
 import datetime as dt
 
-# =====================
-# CONFIG
-# =====================
 TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
+STAC_URL = "https://stac.dataspace.copernicus.eu/v1/search"
 
-# =====================
-# AUTH (Copernicus)
-# =====================
-def get_access_token():
+COLLECTION = "sentinel-1-grd"
+
+REGIONS = [
+    {"name": "Red Sea", "bbox": [32.0, 12.0, 44.5, 30.5]},
+    {"name": "Arabian Gulf", "bbox": [47.0, 23.0, 56.8, 30.8]},
+]
+
+def get_token():
     payload = {
         "grant_type": "client_credentials",
         "client_id": os.environ["CDSE_CLIENT_ID"],
         "client_secret": os.environ["CDSE_CLIENT_SECRET"],
     }
 
-    r = requests.post(TOKEN_URL, data=payload, timeout=60)
-
-    print("TOKEN STATUS:", r.status_code)
-
-    if r.status_code != 200:
-        print(r.text)
-        r.raise_for_status()
-
+    r = requests.post(TOKEN_URL, data=payload)
     return r.json()["access_token"]
 
-# =====================
-# TELEGRAM TEST
-# =====================
-def send_telegram(message):
-    bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
-    chat_id = os.environ["TELEGRAM_CHAT_ID"]
+def search_s1(token, bbox):
+    now = dt.datetime.utcnow()
+    start = now - dt.timedelta(hours=72)
 
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-
-    payload = {
-        "chat_id": chat_id,
-        "text": message
+    body = {
+        "collections": [COLLECTION],
+        "bbox": bbox,
+        "datetime": f"{start.strftime('%Y-%m-%dT%H:%M:%SZ')}/{now.strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        "limit": 10
     }
 
-    r = requests.post(url, json=payload, timeout=30)
+    headers = {"Authorization": f"Bearer {token}"}
 
-    print("Telegram status:", r.status_code)
-    print("Telegram response:", r.text)
+    r = requests.post(STAC_URL, json=body, headers=headers)
 
-# =====================
-# MAIN
-# =====================
+    return r.json().get("features", [])
+
 def main():
-    print("===== START =====")
+    token = get_token()
 
-    # 1) Test Token
-    token = get_access_token()
-    print("Token OK (length):", len(token))
-
-    # 2) Test Telegram
-    send_telegram("🟢 النظام شغال تمام - Copernicus + Telegram OK")
-
-    print("===== DONE =====")
-
+    for region in REGIONS:
+        feats = search_s1(token, region["bbox"])
+        print(region["name"], "=>", len(feats), "scenes")
 
 if __name__ == "__main__":
     main()
