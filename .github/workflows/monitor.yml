@@ -1,4 +1,4 @@
-name: Oil Spill Intelligence System
+name: Oil Spill Intelligence
 
 on:
   workflow_dispatch:
