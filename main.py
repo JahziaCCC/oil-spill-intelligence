@@ -20,7 +20,7 @@ REGIONS = [
 LOOKBACK_HOURS = 72
 
 # =====================
-# AUTH
+# AUTH (Client Credentials - الصحيح)
 # =====================
 def get_token():
     payload = {
@@ -30,11 +30,16 @@ def get_token():
     }
 
     r = requests.post(TOKEN_URL, data=payload, timeout=60)
-    r.raise_for_status()
+
+    if r.status_code != 200:
+        print("❌ TOKEN ERROR:", r.status_code)
+        print(r.text[:300])
+        raise Exception("Token failed")
+
     return r.json()["access_token"]
 
 # =====================
-# FETCH DATA
+# SAFE STAC SEARCH
 # =====================
 def search_scenes(token, bbox):
     now = dt.datetime.utcnow()
@@ -47,15 +52,34 @@ def search_scenes(token, bbox):
         "limit": 10
     }
 
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json"
+    }
 
-    r = requests.post(STAC_URL, json=body, headers=headers, timeout=120)
-    r.raise_for_status()
+    try:
+        r = requests.post(STAC_URL, json=body, headers=headers, timeout=120)
 
-    return r.json().get("features", [])
+        if r.status_code != 200:
+            print("❌ STAC ERROR:", r.status_code)
+            print(r.text[:400])
+            return []
+
+        try:
+            data = r.json()
+        except Exception:
+            print("❌ INVALID JSON RESPONSE")
+            print(r.text[:400])
+            return []
+
+        return data.get("features", [])
+
+    except Exception as e:
+        print("❌ REQUEST ERROR:", str(e))
+        return []
 
 # =====================
-# REALISTIC SAR MODEL (FIXED VARIATION)
+# SIMULATED SAR (Stable + variation)
 # =====================
 def sar_model(scene_id):
     seed = abs(hash(scene_id)) % 99991
@@ -63,8 +87,11 @@ def sar_model(scene_id):
 
     base = rng.random((200, 200))
 
-    # variability between scenes (important fix)
-    gradient = np.linspace(rng.uniform(0.2, 0.9), rng.uniform(0.3, 1.0), 200)
+    gradient = np.linspace(
+        rng.uniform(0.2, 0.9),
+        rng.uniform(0.3, 1.0),
+        200
+    )
     gradient = np.tile(gradient, (200, 1))
 
     speckle = rng.normal(0, 0.12, (200, 200))
@@ -74,7 +101,7 @@ def sar_model(scene_id):
     return np.clip(img, 0, 1)
 
 # =====================
-# IMPROVED OIL DETECTION (NO 50% BIAS)
+# OIL PROBABILITY MODEL (FIXED)
 # =====================
 def oil_probability(arr):
     p1 = np.percentile(arr, 1)
@@ -119,13 +146,16 @@ def classify(prob, conf):
 # =====================
 # TELEGRAM
 # =====================
-def send_telegram(msg):
+def send_telegram(text):
     url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage"
 
-    requests.post(url, json={
-        "chat_id": os.environ["TELEGRAM_CHAT_ID"],
-        "text": msg
-    }, timeout=30)
+    try:
+        requests.post(url, json={
+            "chat_id": os.environ["TELEGRAM_CHAT_ID"],
+            "text": text
+        }, timeout=30)
+    except Exception as e:
+        print("❌ TELEGRAM ERROR:", str(e))
 
 # =====================
 # MAIN
@@ -137,7 +167,7 @@ def main():
     alerts = []
 
     report.append("🚨 نظام رصد الانسكابات النفطية")
-    report.append("🛰️ Sentinel-1 + AI Probability Engine (Stable)")
+    report.append("🛰️ Sentinel-1 + AI Engine (Stable)")
     report.append("════════════════════")
 
     for region in REGIONS:
@@ -147,7 +177,7 @@ def main():
         report.append(f"📊 عدد المشاهد: {len(scenes)}")
 
         for s in scenes[:5]:
-            scene_id = s.get("id")
+            scene_id = s.get("id", "unknown")
 
             arr = sar_model(scene_id)
             prob, conf = oil_probability(arr)
@@ -157,41 +187,10 @@ def main():
             report.append(line)
 
             if risk != "🟢 LOW RISK":
-                alerts.append({
-                    "region": region["name"],
-                    "bbox": region["bbox"],
-                    "probability": prob,
-                    "confidence": conf,
-                    "risk": risk
-                })
+                alerts.append(scene_id)
 
     report.append("\n════════════════════")
     report.append(f"🚨 عدد التنبيهات: {len(alerts)}")
-
-    # save geojson
-    geojson = {
-        "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "properties": a,
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [[
-                        [a["bbox"][0], a["bbox"][1]],
-                        [a["bbox"][2], a["bbox"][1]],
-                        [a["bbox"][2], a["bbox"][3]],
-                        [a["bbox"][0], a["bbox"][3]],
-                        [a["bbox"][0], a["bbox"][1]],
-                    ]]
-                }
-            }
-            for a in alerts
-        ]
-    }
-
-    with open("alerts.geojson", "w", encoding="utf-8") as f:
-        json.dump(geojson, f, ensure_ascii=False, indent=2)
 
     send_telegram("\n".join(report))
 
