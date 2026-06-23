@@ -1,0 +1,12 @@
+{
+  "lookback_hours": 72,
+  "dark_db_threshold": -18,
+  "min_dark_ratio": 0.02,
+
+  "areas": [
+    {
+      "name_ar": "الخليج العربي",
+      "bbox": [47.0, 24.0, 57.0, 30.0]
+    }
+  ]
+}
