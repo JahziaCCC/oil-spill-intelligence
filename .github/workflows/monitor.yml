@@ -1,4 +1,4 @@
-name: Oil Spill System
+name: Oil Spill Monitor
 
 on:
   workflow_dispatch:
@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: pip install requests numpy
 
-      - name: Run
+      - name: Run system
         env:
           CDSE_CLIENT_ID: ${{ secrets.CDSE_CLIENT_ID }}
           CDSE_CLIENT_SECRET: ${{ secrets.CDSE_CLIENT_SECRET }}
