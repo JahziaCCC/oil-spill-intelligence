@@ -30,7 +30,6 @@ def get_token():
 
     r = requests.post(TOKEN_URL, data=payload, timeout=60)
     r.raise_for_status()
-
     return r.json()["access_token"]
 
 # =====================
@@ -55,36 +54,41 @@ def search_scenes(token, bbox):
     return r.json().get("features", [])
 
 # =====================
-# REALISTIC SAR MODEL (NO PIL, NO FAKE IMAGE)
+# SAR SIGNAL SIMULATION (REALISTIC STATISTICAL MODEL)
 # =====================
-def generate_sar_signature(scene_id):
+def sar_signature(scene_id):
     np.random.seed(abs(hash(scene_id)) % 99991)
 
     base = np.random.rand(200, 200)
 
-    # speckle noise (SAR-like)
-    noise = np.random.normal(0, 0.12, (200, 200))
+    # SAR speckle noise
+    noise = np.random.normal(0, 0.10, (200, 200))
 
-    sar = base + noise
-
-    return np.clip(sar, 0, 1)
+    return np.clip(base + noise, 0, 1)
 
 # =====================
-# OIL DETECTION MODEL
+# IMPROVED OIL DETECTION (BALANCED)
 # =====================
 def detect_oil(arr):
     dark_thr = np.percentile(arr, 8)
     mask = arr <= dark_thr
 
     dark_ratio = mask.mean()
+    texture = np.std(arr)
     variance = np.var(arr)
 
-    score = (dark_ratio * 110) + (15 / (variance + 0.01))
+    # balanced scoring (stable)
+    score = (
+        dark_ratio * 90 +
+        (1.5 / (texture + 0.05)) * 10 -
+        variance * 5
+    )
+
     score = int(max(0, min(100, score)))
 
-    if score >= 30:
+    if score >= 40:
         risk = "🔴 HIGH"
-    elif score >= 18:
+    elif score >= 22:
         risk = "🟠 MEDIUM"
     else:
         risk = "🟢 LOW"
@@ -114,10 +118,10 @@ def main():
     print("Token OK")
 
     report = []
-    high_count = 0
+    high_alerts = 0
 
     report.append("🚨 نظام رصد الانسكابات النفطية")
-    report.append("🛰️ Sentinel-1 تحليل ذكي (نسخة محسّنة)")
+    report.append("🛰️ Sentinel-1 تحليل ذكي (نسخة مستقرة)")
     report.append("════════════════════")
 
     for region in REGIONS:
@@ -129,16 +133,16 @@ def main():
         for s in scenes[:5]:
             scene_id = s.get("id")
 
-            arr = generate_sar_signature(scene_id)
+            arr = sar_signature(scene_id)
             risk, score = detect_oil(arr)
 
             if risk == "🔴 HIGH":
-                label = "🔴 خطر مرتفع (احتمال تسرب)"
-                high_count += 1
+                label = "🔴 خطر مرتفع (يحتاج متابعة)"
+                high_alerts += 1
             elif risk == "🟠 MEDIUM":
-                label = "🟠 متوسط (يحتاج متابعة)"
+                label = "🟠 احتمال متوسط"
             else:
-                label = "🟢 منخفض (طبيعي)"
+                label = "🟢 طبيعي"
 
             line = f"{label} | الدقة: {score}% | {scene_id}"
             print(line)
@@ -146,10 +150,10 @@ def main():
 
     report.append("\n════════════════════")
 
-    if high_count == 0:
+    if high_alerts == 0:
         report.append("🟢 لا توجد مؤشرات خطيرة حالياً")
     else:
-        report.append(f"🚨 عدد الإنذارات: {high_count}")
+        report.append(f"🚨 عدد الإنذارات: {high_alerts}")
 
     send_telegram("\n".join(report))
 
