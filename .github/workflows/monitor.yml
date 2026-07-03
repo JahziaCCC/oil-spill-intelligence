@@ -1,12 +1,10 @@
-name: Oil Spill Intelligence
+name: AIS Test
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 */6 * * *"
 
 jobs:
-  run:
+  test:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,18 +16,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests numpy
+        run: |
+          pip install requests websockets
 
-      - name: Run system
+      - name: Run AIS Test
         env:
-          CDSE_CLIENT_ID: ${{ secrets.CDSE_CLIENT_ID }}
-          CDSE_CLIENT_SECRET: ${{ secrets.CDSE_CLIENT_SECRET }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python main.py
-
-      - name: Upload GeoJSON
-        uses: actions/upload-artifact@v4
-        with:
-          name: alerts
-          path: alerts.geojson
+          AISSTREAM_API_KEY: ${{ secrets.AISSTREAM_API_KEY }}
+        run: python test_ais.py
