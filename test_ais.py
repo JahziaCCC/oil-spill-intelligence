@@ -5,15 +5,12 @@ import websockets
 
 API_KEY = os.environ["AISSTREAM_API_KEY"]
 
-# البحر الأحمر + الخليج العربي
 BOUNDING_BOXES = [
-    [[12.0, 32.0], [30.0, 44.0]],
-    [[24.0, 47.0], [31.0, 57.0]]
+    [[12.0, 32.0], [30.0, 44.0]],  # البحر الأحمر
+    [[24.0, 47.0], [31.0, 57.0]]   # الخليج العربي
 ]
 
 async def main():
-
-    vessels = {}
 
     async with websockets.connect(
         "wss://stream.aisstream.io/v0/stream"
@@ -21,45 +18,28 @@ async def main():
 
         subscribe = {
             "APIKey": API_KEY,
-            "BoundingBoxes": BOUNDING_BOXES,
-            "FilterMessageTypes": ["PositionReport"]
+            "BoundingBoxes": BOUNDING_BOXES
         }
 
         await ws.send(json.dumps(subscribe))
 
         print("✅ Connected to AISStream")
-        print("Receiving data for 20 seconds...\n")
+        print("Waiting for first message...\n")
 
-        end_time = asyncio.get_event_loop().time() + 20
-
-        while asyncio.get_event_loop().time() < end_time:
-
+        while True:
             try:
-                msg = await asyncio.wait_for(ws.recv(), timeout=5)
+                msg = await asyncio.wait_for(ws.recv(), timeout=30)
 
-                data = json.loads(msg)
+                print("=" * 80)
+                print("FIRST MESSAGE RECEIVED:")
+                print("=" * 80)
+                print(msg)
+                print("=" * 80)
 
-                meta = data.get("MetaData", {})
-
-                mmsi = meta.get("MMSI")
-
-                if not mmsi:
-                    continue
-
-                vessels[mmsi] = {
-                    "name": meta.get("ShipName", "Unknown"),
-                    "lat": meta.get("latitude"),
-                    "lon": meta.get("longitude")
-                }
+                break
 
             except asyncio.TimeoutError:
-                pass
-
-    print("=" * 50)
-    print("Total vessels:", len(vessels))
-    print("=" * 50)
-
-    for ship in list(vessels.values())[:10]:
-        print(ship)
+                print("❌ No message received within 30 seconds.")
+                break
 
 asyncio.run(main())
